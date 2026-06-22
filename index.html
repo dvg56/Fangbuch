@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fangbuch Pro</title>
+  <style>
+    body { font-family: sans-serif; padding: 15px; background: #f4f7f6; font-size: 18px; }
+    .card { background: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; box-shadow: 0 3px 6px rgba(0,0,0,0.1); }
+    h2 { margin-top: 0; font-size: 1.5rem; color: #2c3e50; }
+    label { font-weight: 800; display: block; margin-top: 15px; font-size: 1.1rem; }
+    input, select { width: 100%; padding: 16px; margin: 8px 0; border: 2px solid #ccc; border-radius: 10px; font-size: 1.1rem; box-sizing: border-box; }
+    button { width: 100%; padding: 20px; border: none; border-radius: 10px; font-weight: 900; font-size: 1.2rem; cursor: pointer; color: white; margin-top: 10px; }
+    .btn-save { background: #007bff; }
+    .btn-neu { background: #6c757d; }
+    .btn-fang { background: #17a2b8; }
+    .btn-sync { background: #28a745; margin-bottom: 30px; }
+    .btn-disabled { background: #ccc !important; cursor: not-allowed; }
+    .del-btn { color: red; font-weight: bold; cursor: pointer; margin-left: 10px; font-size: 0.9rem; }
+    ul { padding-left: 25px; color: #444; font-size: 1.1rem; }
+  </style>
+</head>
+<body onload="init()">
+  <div class="card">
+    <h2>Session</h2>
+    <label>Session Nr.</label><input type="text" id="snr">
+    <label>Datum</label><input type="date" id="datum">
+    <label>Start / Ende</label>
+    <div style="display:flex; gap:10px;"><input type="time" id="von"><input type="time" id="bis"></div>
+    <label>Gewässer</label><select id="gewaesser"><option value="">-- Gewässer --</option></select>
+    <button id="saveBtn" class="btn-save" onclick="addSession()">Session speichern</button>
+    <button class="btn-neu" onclick="newSession()">+ Neue Session starten</button>
+  </div>
+  <div class="card">
+    <h2>Fänge</h2>
+    <label>Fangzeit</label><input type="time" id="fangZeit">
+    <label>Fischart</label><select id="fisch"><option value="">-- Fischart --</option></select>
+    <label>Länge (cm)</label><input type="number" id="laenge">
+    <button class="btn-fang" onclick="addFang()">Fang hinzufügen</button>
+    <ul id="fangListe"></ul>
+  </div>
+  <button id="syncBtn" class="btn-sync" onclick="sync()">Sync mit GSheet</button>
+  <div id="status" style="text-align:center; font-weight:bold; font-size: 1.1rem;"></div>
+  <script>
+    const API_URL = 'https://script.google.com/macros/s/AKfycbyXlY6V8QAWT2emlsn8eOtSEcl2ChnOC2NgHFUi9lViT-bth3gSolC7SbTyIk2ZgB9q0Q/exec';
+    async function init() {
+      document.getElementById('datum').valueAsDate = new Date();
+      try {
+        const resp = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'getData' }) });
+        const data = await resp.json();
+        render(data);
+      } catch (e) { /* Offline */ }
+    }
+    function render(d) {
+      if(d && d.nextSnr) document.getElementById('snr').value = d.nextSnr;
+      let g = document.getElementById('gewaesser');
+      let f = document.getElementById('fisch');
+      if(d && d.gewaesser) d.gewaesser.forEach(i => g.innerHTML += `<option value="${i}">${i}</option>`);
+      if(d && d.fischarten) d.fischarten.forEach(i => f.innerHTML += `<option value="${i}">${i}</option>`);
+      updateFangListe();
+    }
+    function addSession() {
+      const entry = { typ: 'session', snr: document.getElementById('snr').value, datum: document.getElementById('datum').value, 
+                      von: document.getElementById('von').value, bis: document.getElementById('bis').value, gewaesser: document.getElementById('gewaesser').value };
+      saveToQueue(entry);
+      const btn = document.getElementById('saveBtn');
+      btn.innerText = `Session ${entry.snr} im Speicher`;
+      btn.classList.add('btn-disabled');
+      btn.disabled = true;
+    }
+    function newSession() {
+      document.getElementById('saveBtn').innerText = "Session speichern";
+      document.getElementById('saveBtn').classList.remove('btn-disabled');
+      document.getElementById('saveBtn').disabled = false;
+      document.getElementById('fangListe').innerHTML = ""; 
+    }
+    function addFang() {
+      const entry = { typ: 'fang', snr: document.getElementById('snr').value, zeit: document.getElementById('fangZeit').value, 
+                      fisch: document.getElementById('fisch').value, laenge: document.getElementById('laenge').value, id: Date.now() };
+      saveToQueue(entry);
+      updateFangListe();
+    }
+    function deleteFang(id) {
+      let queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      queue = queue.filter(e => e.id !== id);
+      localStorage.setItem('queue', JSON.stringify(queue));
+      updateFangListe();
+    }
+    function saveToQueue(entry) {
+      const queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      queue.push(entry);
+      localStorage.setItem('queue', JSON.stringify(queue));
+    }
+    function updateFangListe() {
+      const queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      const liste = document.getElementById('fangListe');
+      liste.innerHTML = "";
+      queue.filter(e => e.typ === 'fang').forEach(e => {
+        liste.innerHTML += `<li><b>S${e.snr}:</b> ${e.zeit} - ${e.fisch} (${e.laenge}cm) <span class="del-btn" onclick="deleteFang(${e.id})">[Löschen]</span></li>`;
+      });
+    }
+    async function sync() {
+      document.getElementById('syncBtn').disabled = true;
+      const queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      try {
+        await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'saveBatch', payload: queue }) });
+        localStorage.removeItem('queue');
+        alert("Sync erfolgreich!"); location.reload();
+      } catch (e) { alert("Sync fehlgeschlagen!"); document.getElementById('syncBtn').disabled = false; }
+    }
+  </script>
+</body>
+</html>
+
