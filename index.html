@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -15,9 +16,7 @@
     .btn-neu { background: #6c757d; }
     .btn-fang { background: #17a2b8; }
     .btn-sync { background: #28a745; margin-bottom: 30px; }
-    .btn-disabled { background: #ccc !important; cursor: not-allowed; }
     .del-btn { color: red; font-weight: bold; cursor: pointer; margin-left: 10px; font-size: 0.9rem; }
-    ul { padding-left: 25px; color: #444; font-size: 1.1rem; }
   </style>
 </head>
 <body onload="init()">
@@ -40,57 +39,76 @@
     <ul id="fangListe"></ul>
   </div>
   <button id="syncBtn" class="btn-sync" onclick="sync()">Sync mit GSheet</button>
-  <div id="status" style="text-align:center; font-weight:bold; font-size: 1.1rem;"></div>
+  
   <script>
     const API_URL = 'https://script.google.com/macros/s/AKfycbyXlY6V8QAWT2emlsn8eOtSEcl2ChnOC2NgHFUi9lViT-bth3gSolC7SbTyIk2ZgB9q0Q/exec';
+
     async function init() {
-      document.getElementById('datum').valueAsDate = new Date();
-      try {
-        const resp = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'getData' }) });
-        const data = await resp.json();
-        render(data);
-      } catch (e) { /* Offline */ }
+      if (!localStorage.getItem('masterData')) {
+        try {
+          const resp = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'getData' }) });
+          localStorage.setItem('masterData', JSON.stringify(await resp.json()));
+        } catch(e) { console.log("Offline"); }
+      }
+      render();
+      updateFangListe();
     }
-    function render(d) {
-      if(d && d.nextSnr) document.getElementById('snr').value = d.nextSnr;
+
+    function render() {
+      const master = JSON.parse(localStorage.getItem('masterData') || '{}');
+      const queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      const session = queue.find(e => e.typ === 'session');
+      
       let g = document.getElementById('gewaesser');
       let f = document.getElementById('fisch');
-      if(d && d.gewaesser) d.gewaesser.forEach(i => g.innerHTML += `<option value="${i}">${i}</option>`);
-      if(d && d.fischarten) d.fischarten.forEach(i => f.innerHTML += `<option value="${i}">${i}</option>`);
-      updateFangListe();
+      if(master.gewaesser && g.options.length <= 1) master.gewaesser.forEach(i => g.innerHTML += `<option value="${i}">${i}</option>`);
+      if(master.fischarten && f.options.length <= 1) master.fischarten.forEach(i => f.innerHTML += `<option value="${i}">${i}</option>`);
+
+      if (session) {
+        document.getElementById('snr').value = session.snr;
+        document.getElementById('datum').value = session.datum;
+        document.getElementById('von').value = session.von;
+        document.getElementById('bis').value = session.bis;
+        document.getElementById('gewaesser').value = session.gewaesser;
+        ['datum', 'von', 'bis', 'gewaesser'].forEach(id => document.getElementById(id).disabled = true);
+        document.getElementById('saveBtn').disabled = true;
+        document.getElementById('saveBtn').innerText = "Session aktiv";
+      } else {
+        if (!document.getElementById('datum').value) document.getElementById('datum').valueAsDate = new Date();
+        document.getElementById('snr').value = localStorage.getItem('lastSnr') || master.nextSnr || "";
+      }
     }
+
     function addSession() {
-      const entry = { typ: 'session', snr: document.getElementById('snr').value, datum: document.getElementById('datum').value, 
-                      von: document.getElementById('von').value, bis: document.getElementById('bis').value, gewaesser: document.getElementById('gewaesser').value };
-      saveToQueue(entry);
-      const btn = document.getElementById('saveBtn');
-      btn.innerText = `Session ${entry.snr} im Speicher`;
-      btn.classList.add('btn-disabled');
-      btn.disabled = true;
+      const snr = document.getElementById('snr').value;
+      const datum = document.getElementById('datum').value;
+      const von = document.getElementById('von').value;
+      const bis = document.getElementById('bis').value;
+      const gewaesser = document.getElementById('gewaesser').value;
+      if (!snr || !datum || !von || !bis || !gewaesser) return alert("Alle Session-Felder ausfüllen!");
+      saveToQueue({ typ: 'session', snr, datum, von, bis, gewaesser });
+      const parts = snr.split('-');
+      if(parts.length > 1) localStorage.setItem('lastSnr', parts[0] + "-" + (parseInt(parts[1]) + 1));
+      location.reload();
     }
-    function newSession() {
-      document.getElementById('saveBtn').innerText = "Session speichern";
-      document.getElementById('saveBtn').classList.remove('btn-disabled');
-      document.getElementById('saveBtn').disabled = false;
-      document.getElementById('fangListe').innerHTML = ""; 
-    }
+
     function addFang() {
-      const entry = { typ: 'fang', snr: document.getElementById('snr').value, zeit: document.getElementById('fangZeit').value, 
-                      fisch: document.getElementById('fisch').value, laenge: document.getElementById('laenge').value, id: Date.now() };
-      saveToQueue(entry);
-      updateFangListe();
+      const session = JSON.parse(localStorage.getItem('queue') || '[]').find(e => e.typ === 'session');
+      if (!session) return alert("Bitte erst Session speichern!");
+      const zeit = document.getElementById('fangZeit').value;
+      const fisch = document.getElementById('fisch').value;
+      const laenge = document.getElementById('laenge').value;
+      if (!zeit || !fisch || !laenge) return alert("Bitte Fangzeit, Fischart und Länge angeben!");
+      saveToQueue({ typ: 'fang', snr: session.snr, datum: session.datum, zeit, fisch, laenge, id: Date.now() });
+      location.reload();
     }
-    function deleteFang(id) {
-      let queue = JSON.parse(localStorage.getItem('queue') || '[]');
-      queue = queue.filter(e => e.id !== id);
-      localStorage.setItem('queue', JSON.stringify(queue));
-      updateFangListe();
-    }
+
     function saveToQueue(entry) {
       const queue = JSON.parse(localStorage.getItem('queue') || '[]');
       queue.push(entry);
       localStorage.setItem('queue', JSON.stringify(queue));
     }
+
     function updateFangListe() {
       const queue = JSON.parse(localStorage.getItem('queue') || '[]');
       const liste = document.getElementById('fangListe');
@@ -99,14 +117,35 @@
         liste.innerHTML += `<li><b>S${e.snr}:</b> ${e.zeit} - ${e.fisch} (${e.laenge}cm) <span class="del-btn" onclick="deleteFang(${e.id})">[Löschen]</span></li>`;
       });
     }
+
+    function deleteFang(id) {
+      let queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      queue = queue.filter(e => e.id !== id);
+      localStorage.setItem('queue', JSON.stringify(queue));
+      location.reload();
+    }
+
+    function newSession() {
+      let queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      queue = queue.filter(e => e.typ !== 'session');
+      localStorage.setItem('queue', JSON.stringify(queue));
+      location.reload(); 
+    }
+
     async function sync() {
-      document.getElementById('syncBtn').disabled = true;
       const queue = JSON.parse(localStorage.getItem('queue') || '[]');
+      document.getElementById('syncBtn').innerText = "Sync läuft...";
       try {
+        // Hier wird jetzt IMMER gesynct, egal ob Queue leer oder nicht, 
+        // um Stammdaten zu aktualisieren.
         await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'saveBatch', payload: queue }) });
+        const master = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'getData' }) }).then(r => r.json());
+        localStorage.setItem('masterData', JSON.stringify(master));
+        localStorage.setItem('lastSnr', master.nextSnr);
         localStorage.removeItem('queue');
-        alert("Sync erfolgreich!"); location.reload();
-      } catch (e) { alert("Sync fehlgeschlagen!"); document.getElementById('syncBtn').disabled = false; }
+        alert("Sync erfolgreich!");
+        location.reload();
+      } catch (e) { alert("Sync fehlgeschlagen!"); document.getElementById('syncBtn').innerText = "Sync mit GSheet"; }
     }
   </script>
 </body>
